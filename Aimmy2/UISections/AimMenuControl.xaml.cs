@@ -173,6 +173,7 @@ namespace Aimmy2.Controls
                 })
                 .AddKeyChanger("Aim Keybind", k => uiManager.C_Keybind = k)
                 .AddKeyChanger("Second Aim Keybind")
+                .AddKeyChanger("Aim Assist Toggle Keybind", k => uiManager.C_AimToggleKeybind = k)
                 .AddToggle("Sticky Aim", t => uiManager.T_StickyAim = t)
                 .AddToggle("Constant AI Tracking", t =>
                 {

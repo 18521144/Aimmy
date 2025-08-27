@@ -13,6 +13,7 @@ namespace Aimmy2.Class
         {
             { "Aim Keybind", "Right"},
             { "Second Aim Keybind", "LMenu"},
+            { "Aim Assist Toggle Keybind", "F1"},
             { "Dynamic FOV Keybind", "Left"},
             { "Emergency Stop Keybind", "Delete"},
             { "Model Switch Keybind", "OemPipe"},

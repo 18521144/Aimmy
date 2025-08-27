@@ -264,7 +264,7 @@ namespace Aimmy2
         {
             var keybinds = new[]
             {
-                "Aim Keybind", "Second Aim Keybind", "Dynamic FOV Keybind",
+                "Aim Keybind", "Second Aim Keybind", "Aim Assist Toggle Keybind", "Dynamic FOV Keybind",
                 "Emergency Stop Keybind", "Model Switch Keybind",
                 "Anti Recoil Keybind", "Disable Anti Recoil Keybind",
                 "Gun 1 Key", "Gun 2 Key"
@@ -728,7 +728,8 @@ namespace Aimmy2
                 ["Anti Recoil Keybind"] = () => HandleAntiRecoil(true),
                 ["Disable Anti Recoil Keybind"] = DisableAntiRecoil,
                 ["Gun 1 Key"] = () => LoadGunConfig("Gun 1 Config"),
-                ["Gun 2 Key"] = () => LoadGunConfig("Gun 2 Config")
+                ["Gun 2 Key"] = () => LoadGunConfig("Gun 2 Config"),
+                ["Aim Assist Toggle Keybind"] = ToggleAimAssist
             };
 
             handlers.GetValueOrDefault(bindingId)?.Invoke();
@@ -743,6 +744,27 @@ namespace Aimmy2
             };
 
             handlers.GetValueOrDefault(bindingId)?.Invoke();
+        }
+
+        private void ToggleAimAssist()
+        {
+            if (!Dictionary.toggleState["Aim Assist"])
+            {
+                if (Dictionary.lastLoadedModel == "N/A")
+                {
+                    LogManager.Log(LogManager.LogLevel.Warning, "Please load a model first", true);
+                    return;
+                }
+            }
+
+            Dictionary.toggleState["Aim Assist"] = !Dictionary.toggleState["Aim Assist"];
+            UpdateToggleUI(uiManager.T_AimAligner!, Dictionary.toggleState["Aim Assist"]);
+            Toggle_Action("Aim Assist");
+
+            var message = Dictionary.toggleState["Aim Assist"]
+                ? "[Aim Assist Keybind] Enabled Aim Assist."
+                : "[Aim Assist Keybind] Disabled Aim Assist.";
+            LogManager.Log(LogManager.LogLevel.Info, message, true);
         }
 
         private void HandleModelSwitch()
