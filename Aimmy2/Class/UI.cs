@@ -12,6 +12,7 @@ namespace Class
         public AToggle? T_AimAligner { get; set; }
 
         public AKeyChanger? C_Keybind { get; set; }
+        public AKeyChanger? C_AimToggleKeybind { get; set; }
         public AToggle? T_ConstantAITracking { get; set; }
         public AToggle? T_StickyAim { get; set; }
         public AToggle? T_Predictions { get; set; }
