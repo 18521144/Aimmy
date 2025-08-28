@@ -1,10 +1,13 @@
 ﻿using Aimmy2.Class;
 using Aimmy2.Theme;
+using Aimmy2.AILogic;
 using Class;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using Color = System.Windows.Media.Color;
 
 namespace Visuality
@@ -20,24 +23,18 @@ namespace Visuality
 
         private bool _isInitialized = false;
 
+        private SolidColorBrush _strokeBrush = new SolidColorBrush(Colors.Red);
+
         public DetectedPlayerWindow()
         {
             InitializeComponent();
 
-            //Subscribe to my Onlyfans to exclude bad Behavior!
             ThemeManager.ExcludeWindowFromBackground(this);
-
             Title = "";
 
-            // Subscribe to display changes early
             DisplayManager.DisplayChanged += OnDisplayChanged;
 
-            // Subscribe to property changes
             PropertyChanger.ReceiveDPColor = UpdateDPColor;
-            PropertyChanger.ReceiveDPFontSize = UpdateDPFontSize;
-            PropertyChanger.ReceiveDPWCornerRadius = ChangeCornerRadius;
-            PropertyChanger.ReceiveDPWBorderThickness = ChangeBorderThickness;
-            PropertyChanger.ReceiveDPWOpacity = ChangeOpacity;
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -96,29 +93,6 @@ namespace Visuality
                 // Maximize to cover entire display
                 this.WindowState = WindowState.Maximized;
 
-                // Update tracer start position (changed to be dynamic)
-                DetectedTracers.X1 = (DisplayManager.ScreenWidth / 2.0) / WinAPICaller.scalingFactorX;
-
-                string tracerPosition = "Bottom"; // default value
-                if (Dictionary.dropdownState.TryGetValue("Tracer Position", out var position))
-                {
-                    tracerPosition = position.ToString();
-                }
-
-                switch (tracerPosition)
-                {
-                    case "Bottom":
-                        DetectedTracers.Y1 = DisplayManager.ScreenHeight / WinAPICaller.scalingFactorY;
-                        break;
-                    case "Middle":
-                        DetectedTracers.Y1 = (DisplayManager.ScreenHeight / 2.0) / WinAPICaller.scalingFactorY;
-                        break;
-                    case "Top":
-                        DetectedTracers.Y1 = 0;
-                        break;
-                }
-
-                // Force layout update
                 this.UpdateLayout();
 
             }
@@ -127,24 +101,33 @@ namespace Visuality
             }
         }
 
-        private void UpdateDPColor(Color NewColor)
+        private void UpdateDPColor(Color newColor)
         {
-            DetectedPlayerFocus.BorderBrush = new SolidColorBrush(NewColor);
-            DetectedPlayerConfidence.Foreground = new SolidColorBrush(NewColor);
-            DetectedTracers.Stroke = new SolidColorBrush(NewColor);
+            _strokeBrush = new SolidColorBrush(newColor);
+            foreach (var rect in DetectionCanvas.Children.OfType<Rectangle>())
+            {
+                rect.Stroke = _strokeBrush;
+            }
         }
 
-        private void UpdateDPFontSize(int newint) => DetectedPlayerConfidence.FontSize = newint;
-
-        private void ChangeCornerRadius(int newint) => DetectedPlayerFocus.CornerRadius = new CornerRadius(newint);
-
-        private void ChangeBorderThickness(double newdouble)
+        public void DrawDetections(IEnumerable<Prediction> predictions)
         {
-            DetectedPlayerFocus.BorderThickness = new Thickness(newdouble);
-            DetectedTracers.StrokeThickness = newdouble;
+            DetectionCanvas.Children.Clear();
+            foreach (var p in predictions)
+            {
+                var rect = p.Rectangle;
+                var box = new Rectangle
+                {
+                    Width = rect.Width / WinAPICaller.scalingFactorX,
+                    Height = rect.Height / WinAPICaller.scalingFactorY,
+                    Stroke = _strokeBrush,
+                    StrokeThickness = 1
+                };
+                Canvas.SetLeft(box, (rect.X - DisplayManager.ScreenLeft) / WinAPICaller.scalingFactorX);
+                Canvas.SetTop(box, (rect.Y - DisplayManager.ScreenTop) / WinAPICaller.scalingFactorY);
+                DetectionCanvas.Children.Add(box);
+            }
         }
-
-        private void ChangeOpacity(double newdouble) => DetectedPlayerFocus.Opacity = newdouble;
 
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {

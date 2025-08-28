@@ -1,7 +1,6 @@
 ﻿using AILogic;
 using Aimmy2.Class;
 using Class;
-using InputLogic;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Newtonsoft.Json.Linq;
@@ -53,8 +52,6 @@ namespace Aimmy2.AILogic
         private DateTime lastSavedTime = DateTime.MinValue;
         private List<string>? _outputNames;
         private RectangleF LastDetectionBox;
-        private KalmanPrediction kalmanPrediction;
-        private WiseTheFoxPrediction wtfpredictionManager;
 
         private byte[]? _bitmapBuffer; // Reusable buffer for bitmap operations
 
@@ -70,29 +67,10 @@ namespace Aimmy2.AILogic
         private Thread? _aiLoopThread;
         private volatile bool _isAiLoopRunning;
 
-        // For Auto-Labelling Data System
-        private bool PlayerFound = false;
-
-        // Sticky-Aim 
-        private Prediction? _currentTarget = null;
-        private int _consecutiveFramesWithoutTarget = 0;
-        private const int MAX_FRAMES_WITHOUT_TARGET = 3; // Allow 3 frames of target loss
-
-        private double CenterXTranslated = 0;
-        private double CenterYTranslated = 0;
-
-        // For Shall0e's Prediction Method
-        private int PrevX = 0;
-        private int PrevY = 0;
-
         // Benchmarking
         private int iterationCount = 0;
         private long totalTime = 0;
 
-        private int detectedX { get; set; }
-        private int detectedY { get; set; }
-
-        public double AIConf = 0;
         private static int targetX, targetY;
 
         // Pre-calculated values - now dynamic
@@ -201,9 +179,6 @@ namespace Aimmy2.AILogic
             {
                 _captureManager.InitializeDxgiDuplication();
             }
-
-            kalmanPrediction = new KalmanPrediction();
-            wtfpredictionManager = new WiseTheFoxPrediction();
 
             _modeloptions = new RunOptions();
 
@@ -450,16 +425,11 @@ namespace Aimmy2.AILogic
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool ShouldPredict() =>
-            Dictionary.toggleState["Show Detected Player"] ||
-            Dictionary.toggleState["Constant AI Tracking"] ||
-            InputBindingManager.IsHoldingBinding("Aim Keybind") ||
-            InputBindingManager.IsHoldingBinding("Second Aim Keybind");
+            Dictionary.toggleState["Show Detected Player"];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool ShouldProcess() =>
-            Dictionary.toggleState["Aim Assist"] ||
-            Dictionary.toggleState["Show Detected Player"] ||
-            Dictionary.toggleState["Auto Trigger"];
+            Dictionary.toggleState["Show Detected Player"];
 
         private async void AiLoop()
         {
@@ -491,39 +461,26 @@ namespace Aimmy2.AILogic
                     {
                         if (ShouldPredict())
                         {
-                            Prediction? closestPrediction;
-                            using (Benchmark("GetClosestPrediction"))
+                            List<Prediction> predictions;
+                            using (Benchmark("GetPredictions"))
                             {
-                                closestPrediction = await GetClosestPrediction();
+                                predictions = await GetPredictions();
                             }
 
-                            if (closestPrediction == null)
+                            if (predictions == null || predictions.Count == 0)
                             {
                                 DisableOverlay(DetectedPlayerOverlay!);
                                 continue;
                             }
 
-                            using (Benchmark("AutoTrigger"))
-                            {
-                                await AutoTrigger();
-                            }
-
-                            using (Benchmark("CalculateCoordinates"))
-                            {
-                                CalculateCoordinates(DetectedPlayerOverlay, closestPrediction, _scaleX, _scaleY);
-                            }
-
-                            using (Benchmark("HandleAim"))
-                            {
-                                HandleAim(closestPrediction);
-                            }
+                            Application.Current.Dispatcher.Invoke(() =>
+                                DetectedPlayerOverlay!.DrawDetections(predictions));
 
                             totalTime += stopwatch.ElapsedMilliseconds;
                             iterationCount++;
                         }
                         else
                         {
-                            // Processing so we are at the ready but not holding right/click.
                             await Task.Delay(1);
                         }
                     }
@@ -540,68 +497,6 @@ namespace Aimmy2.AILogic
 
         #region AI Loop Functions
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private async Task AutoTrigger()
-        {
-            // if auto trigger is disabled,
-            // or if the aim keybinds are not held,
-            // or if constant AI tracking is enabled,
-            // we check for spray release and return
-            if (!Dictionary.toggleState["Auto Trigger"] ||
-                !(InputBindingManager.IsHoldingBinding("Aim Keybind") && !InputBindingManager.IsHoldingBinding("Second Aim Keybind")) ||
-                Dictionary.toggleState["Constant AI Tracking"]) // this logic is a bit weird, but it works.
-                                                                // but it might need to be revised
-            {
-                CheckSprayRelease();
-                return;
-            }
-
-
-            if (Dictionary.toggleState["Spray Mode"])
-            {
-                await MouseManager.DoTriggerClick(LastDetectionBox);
-                return;
-            }
-
-
-            if (Dictionary.toggleState["Cursor Check"])
-            {
-                var mousePos = WinAPICaller.GetCursorPosition();
-
-                if (!DisplayManager.IsPointInCurrentDisplay(new System.Windows.Point(mousePos.X, mousePos.Y)))
-                {
-                    return;
-                }
-
-                if (LastDetectionBox.Contains(mousePos.X, mousePos.Y))
-                {
-                    await MouseManager.DoTriggerClick(LastDetectionBox);
-                }
-            }
-            else
-            {
-                await MouseManager.DoTriggerClick();
-            }
-
-            if (!Dictionary.toggleState["Aim Assist"] || !Dictionary.toggleState["Show Detected Player"]) return;
-
-        }
-        private void CheckSprayRelease()
-        {
-            if (!Dictionary.toggleState["Spray Mode"]) return;
-
-            // if auto trigger is disabled, we reset the spray state
-            // if the aim keybinds are not held, we reset the spray state
-            bool shouldSpray = Dictionary.toggleState["Auto Trigger"] &&
-                (InputBindingManager.IsHoldingBinding("Aim Keybind") && InputBindingManager.IsHoldingBinding("Second Aim Keybind")); //||
-                                                                                                                                     //Dictionary.toggleState["Constant AI Tracking"];
-
-            // spray mode might need to be revised - taylor
-            if (!shouldSpray)
-            {
-                MouseManager.ResetSprayState();
-            }
-        }
 
         private async void UpdateFOV()
         {
@@ -627,285 +522,50 @@ namespace Aimmy2.AILogic
             }
         }
 
-        private static void DisableOverlay(DetectedPlayerWindow DetectedPlayerOverlay)
+        private static void DisableOverlay(DetectedPlayerWindow detectedPlayerOverlay)
         {
             if (Dictionary.toggleState["Show Detected Player"] && Dictionary.DetectedPlayerOverlay != null)
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    if (Dictionary.toggleState["Show AI Confidence"])
-                    {
-                        DetectedPlayerOverlay!.DetectedPlayerConfidence.Opacity = 0;
-                    }
-
-                    if (Dictionary.toggleState["Show Tracers"])
-                    {
-                        DetectedPlayerOverlay!.DetectedTracers.Opacity = 0;
-                    }
-
-                    DetectedPlayerOverlay!.DetectedPlayerFocus.Opacity = 0;
+                    detectedPlayerOverlay.DrawDetections(Array.Empty<Prediction>());
                 });
             }
         }
 
-        private void UpdateOverlay(DetectedPlayerWindow DetectedPlayerOverlay, Prediction closestPrediction)
+
+        private async Task<List<Prediction>> GetPredictions(bool useMousePosition = true)
         {
-            var scalingFactorX = WinAPICaller.scalingFactorX;
-            var scalingFactorY = WinAPICaller.scalingFactorY;
-
-            // Convert screen coordinates to display-relative coordinates
-            var displayRelativeX = LastDetectionBox.X - DisplayManager.ScreenLeft;
-            var displayRelativeY = LastDetectionBox.Y - DisplayManager.ScreenTop;
-
-            // Calculate center position in display-relative coordinates
-            var centerX = Convert.ToInt16(displayRelativeX / scalingFactorX) + (LastDetectionBox.Width / 2.0);
-            var centerY = Convert.ToInt16(displayRelativeY / scalingFactorY);
-
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                if (Dictionary.toggleState["Show AI Confidence"])
-                {
-                    DetectedPlayerOverlay.DetectedPlayerConfidence.Opacity = 1;
-                    DetectedPlayerOverlay.DetectedPlayerConfidence.Content = $"{closestPrediction.ClassName}: {Math.Round((AIConf * 100), 2)}%";
-
-                    var labelEstimatedHalfWidth = DetectedPlayerOverlay.DetectedPlayerConfidence.ActualWidth / 2.0;
-                    DetectedPlayerOverlay.DetectedPlayerConfidence.Margin = new Thickness(
-                        centerX - labelEstimatedHalfWidth,
-                        centerY - DetectedPlayerOverlay.DetectedPlayerConfidence.ActualHeight - 2, 0, 0);
-                }
-                var showTracers = Dictionary.toggleState["Show Tracers"];
-                DetectedPlayerOverlay.DetectedTracers.Opacity = showTracers ? 1 : 0;
-                if (showTracers)
-                {
-                    var tracerPosition = Dictionary.dropdownState["Tracer Position"];
-
-                    var boxTop = centerY;
-                    var boxBottom = centerY + LastDetectionBox.Height;
-                    var boxHorizontalCenter = centerX;
-                    var boxVerticalCenter = centerY + (LastDetectionBox.Height / 2.0);
-                    var boxLeft = centerX - (LastDetectionBox.Width / 2.0);
-                    var boxRight = centerX + (LastDetectionBox.Width / 2.0);
-
-                    switch (tracerPosition)
-                    {
-                        case "Top":
-                            DetectedPlayerOverlay.DetectedTracers.X2 = boxHorizontalCenter;
-                            DetectedPlayerOverlay.DetectedTracers.Y2 = boxTop;
-                            break;
-
-                        case "Bottom":
-                            DetectedPlayerOverlay.DetectedTracers.X2 = boxHorizontalCenter;
-                            DetectedPlayerOverlay.DetectedTracers.Y2 = boxBottom;
-                            break;
-
-                        case "Middle":
-                            var screenHorizontalCenter = DisplayManager.ScreenWidth / (2.0 * WinAPICaller.scalingFactorX);
-                            if (boxHorizontalCenter < screenHorizontalCenter)
-                            {
-                                // if the box is on the left half of the screen, aim for the right-middle of the box
-                                DetectedPlayerOverlay.DetectedTracers.X2 = boxRight;
-                                DetectedPlayerOverlay.DetectedTracers.Y2 = boxVerticalCenter;
-                            }
-                            else
-                            {
-                                // if the box is on the right half, aim for the left-middle
-                                DetectedPlayerOverlay.DetectedTracers.X2 = boxLeft;
-                                DetectedPlayerOverlay.DetectedTracers.Y2 = boxVerticalCenter;
-                            }
-                            break;
-
-                        default:
-                            // default to the bottom-center if the setting is unrecognized
-                            DetectedPlayerOverlay.DetectedTracers.X2 = boxHorizontalCenter;
-                            DetectedPlayerOverlay.DetectedTracers.Y2 = boxBottom;
-                            break;
-                    }
-                }
-
-                DetectedPlayerOverlay.Opacity = Dictionary.sliderSettings["Opacity"];
-
-                DetectedPlayerOverlay.DetectedPlayerFocus.Opacity = 1;
-                DetectedPlayerOverlay.DetectedPlayerFocus.Margin = new Thickness(
-                    centerX - (LastDetectionBox.Width / 2.0), centerY, 0, 0);
-                DetectedPlayerOverlay.DetectedPlayerFocus.Width = LastDetectionBox.Width;
-                DetectedPlayerOverlay.DetectedPlayerFocus.Height = LastDetectionBox.Height;
-            });
-        }
-
-        private void CalculateCoordinates(DetectedPlayerWindow DetectedPlayerOverlay, Prediction closestPrediction, float scaleX, float scaleY)
-        {
-            AIConf = closestPrediction.Confidence;
-
-            if (Dictionary.toggleState["Show Detected Player"] && Dictionary.DetectedPlayerOverlay != null)
-            {
-                using (Benchmark("UpdateOverlay"))
-                {
-                    UpdateOverlay(DetectedPlayerOverlay!, closestPrediction);
-                }
-                if (!Dictionary.toggleState["Aim Assist"]) return;
-            }
-
-            double YOffset = Dictionary.sliderSettings["Y Offset (Up/Down)"];
-            double XOffset = Dictionary.sliderSettings["X Offset (Left/Right)"];
-
-            double YOffsetPercentage = Dictionary.sliderSettings["Y Offset (%)"];
-            double XOffsetPercentage = Dictionary.sliderSettings["X Offset (%)"];
-
-            var rect = closestPrediction.Rectangle;
-
-            if (Dictionary.toggleState["X Axis Percentage Adjustment"])
-            {
-                detectedX = (int)((rect.X + (rect.Width * (XOffsetPercentage / 100))) * scaleX);
-            }
-            else
-            {
-                detectedX = (int)((rect.X + rect.Width / 2) * scaleX + XOffset);
-            }
-
-            if (Dictionary.toggleState["Y Axis Percentage Adjustment"])
-            {
-                detectedY = (int)((rect.Y + rect.Height - (rect.Height * (YOffsetPercentage / 100))) * scaleY + YOffset);
-            }
-            else
-            {
-                detectedY = CalculateDetectedY(scaleY, YOffset, closestPrediction);
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int CalculateDetectedY(float scaleY, double YOffset, Prediction closestPrediction)
-        {
-            var rect = closestPrediction.Rectangle;
-            float yBase = rect.Y;
-            float yAdjustment = 0;
-
-            switch (Dictionary.dropdownState["Aiming Boundaries Alignment"])
-            {
-                case "Center":
-                    yAdjustment = rect.Height / 2;
-                    break;
-
-                case "Top":
-                    // yBase is already at the top
-                    break;
-
-                case "Bottom":
-                    yAdjustment = rect.Height;
-                    break;
-            }
-
-            return (int)((yBase + yAdjustment) * scaleY + YOffset);
-        }
-
-        private void HandleAim(Prediction closestPrediction)
-        {
-            if (Dictionary.toggleState["Aim Assist"] &&
-                (Dictionary.toggleState["Constant AI Tracking"] ||
-                 Dictionary.toggleState["Aim Assist"] && InputBindingManager.IsHoldingBinding("Aim Keybind") ||
-                 Dictionary.toggleState["Aim Assist"] && InputBindingManager.IsHoldingBinding("Second Aim Keybind")))
-            {
-                if (Dictionary.toggleState["Predictions"])
-                {
-                    HandlePredictions(kalmanPrediction, closestPrediction, detectedX, detectedY);
-                }
-                else
-                {
-                    MouseManager.MoveCrosshair(detectedX, detectedY);
-                }
-            }
-        }
-
-        private void HandlePredictions(KalmanPrediction kalmanPrediction, Prediction closestPrediction, int detectedX, int detectedY)
-        {
-            var predictionMethod = Dictionary.dropdownState["Prediction Method"];
-            switch (predictionMethod)
-            {
-                case "Kalman Filter":
-                    KalmanPrediction.Detection detection = new()
-                    {
-                        X = detectedX,
-                        Y = detectedY,
-                        Timestamp = DateTime.UtcNow
-                    };
-
-                    kalmanPrediction.UpdateKalmanFilter(detection);
-                    var predictedPosition = kalmanPrediction.GetKalmanPosition();
-
-                    MouseManager.MoveCrosshair(predictedPosition.X, predictedPosition.Y);
-                    break;
-
-                case "Shall0e's Prediction":
-                    ShalloePredictionV2.xValues.Add(detectedX - PrevX);
-                    ShalloePredictionV2.yValues.Add(detectedY - PrevY);
-
-                    if (ShalloePredictionV2.xValues.Count > 5)
-                    {
-                        ShalloePredictionV2.xValues.RemoveAt(0);
-                        ShalloePredictionV2.yValues.RemoveAt(0);
-                    }
-
-                    MouseManager.MoveCrosshair(ShalloePredictionV2.GetSPX(), detectedY);
-
-                    PrevX = detectedX;
-                    PrevY = detectedY;
-                    break;
-
-                case "wisethef0x's EMA Prediction":
-                    WiseTheFoxPrediction.WTFDetection wtfdetection = new()
-                    {
-                        X = detectedX,
-                        Y = detectedY,
-                        Timestamp = DateTime.UtcNow
-                    };
-
-                    wtfpredictionManager.UpdateDetection(wtfdetection);
-                    var wtfpredictedPosition = wtfpredictionManager.GetEstimatedPosition();
-
-                    MouseManager.MoveCrosshair(wtfpredictedPosition.X, detectedY);
-                    break;
-            }
-        }
-
-        private async Task<Prediction?> GetClosestPrediction(bool useMousePosition = true)
-        {
-            //whats these variables for? - taylor 
-            //int adjustedTargetX, adjustedTargetY;
-
             if (Dictionary.dropdownState["Detection Area Type"] == "Closest to Mouse")
             {
                 var mousePos = WinAPICaller.GetCursorPosition();
 
-                // Check if mouse is on the current display
                 if (DisplayManager.IsPointInCurrentDisplay(new System.Windows.Point(mousePos.X, mousePos.Y)))
                 {
-                    // Mouse is on current display, use its position
                     targetX = mousePos.X;
                     targetY = mousePos.Y;
                 }
                 else
                 {
-                    // Mouse is on different display, use center of current display
                     targetX = DisplayManager.ScreenLeft + (DisplayManager.ScreenWidth / 2);
                     targetY = DisplayManager.ScreenTop + (DisplayManager.ScreenHeight / 2);
                 }
             }
             else
             {
-                // Center of current display
                 targetX = DisplayManager.ScreenLeft + (DisplayManager.ScreenWidth / 2);
                 targetY = DisplayManager.ScreenTop + (DisplayManager.ScreenHeight / 2);
             }
 
-            Rectangle detectionBox = new(targetX - IMAGE_SIZE / 2, targetY - IMAGE_SIZE / 2, IMAGE_SIZE, IMAGE_SIZE); // Detection box dynamic size
+            Rectangle detectionBox = new(targetX - IMAGE_SIZE / 2, targetY - IMAGE_SIZE / 2, IMAGE_SIZE, IMAGE_SIZE);
 
             Bitmap? frame;
-
             using (Benchmark("ScreenGrab"))
             {
                 frame = _captureManager.ScreenGrab(detectionBox);
             }
 
-            if (frame == null) return null;
+            if (frame == null) return new List<Prediction>();
 
             float[] inputArray;
             using (Benchmark("BitmapToFloatArray"))
@@ -915,13 +575,9 @@ namespace Aimmy2.AILogic
                     _reusableInputArray = new float[3 * IMAGE_SIZE * IMAGE_SIZE];
                 }
                 inputArray = _reusableInputArray;
-
-                // Fill the reusable array
                 BitmapToFloatArrayInPlace(frame, inputArray, IMAGE_SIZE);
             }
 
-            // Reuse tensor and inputs - recreate if size changed
-            /// this needs to be revised !!!!! - taylor
             if (_reusableTensor == null || _reusableTensor.Dimensions[2] != IMAGE_SIZE)
             {
                 _reusableTensor = new DenseTensor<float>(inputArray, new int[] { 1, 3, IMAGE_SIZE, IMAGE_SIZE });
@@ -929,11 +585,10 @@ namespace Aimmy2.AILogic
             }
             else
             {
-                // Directly copy into existing DenseTensor buffer
-                inputArray.AsSpan().CopyTo(_reusableTensor.Buffer.Span); 
+                inputArray.AsSpan().CopyTo(_reusableTensor.Buffer.Span);
             }
 
-            if (_onnxModel == null) return null;
+            if (_onnxModel == null) return new List<Prediction>();
 
             Tensor<float>? outputTensor = null;
             using (Benchmark("ModelInference"))
@@ -942,21 +597,19 @@ namespace Aimmy2.AILogic
                 outputTensor = results[0].AsTensor<float>();
             }
 
-            if(outputTensor == null)
+            if (outputTensor == null)
             {
                 Log(LogLevel.Error, "Model inference returned null output tensor.", true, 2000);
                 SaveFrame(frame);
-                return null;
+                return new List<Prediction>();
             }
 
-            // Calculate the FOV boundaries
             float FovSize = (float)Dictionary.sliderSettings["FOV Size"];
             float fovMinX = (IMAGE_SIZE - FovSize) / 2.0f;
             float fovMaxX = (IMAGE_SIZE + FovSize) / 2.0f;
             float fovMinY = (IMAGE_SIZE - FovSize) / 2.0f;
             float fovMaxY = (IMAGE_SIZE + FovSize) / 2.0f;
 
-            //List<double[]> KDpoints;
             List<Prediction> KDPredictions;
             using (Benchmark("PrepareKDTreeData"))
             {
@@ -966,111 +619,23 @@ namespace Aimmy2.AILogic
             if (KDPredictions.Count == 0)
             {
                 SaveFrame(frame);
-                return null;
+                return new List<Prediction>();
             }
 
-            //kdtree was replaced with linear search
-            Prediction? bestCandidate = null;
-            double bestDistSq = double.MaxValue;
-            double center = IMAGE_SIZE / 2.0;
-
-            // TODO: Optimize this linear search further if needed
-            // TODO: Consider updating KD-Tree and adding options to switch from linear to kd.
-            // we can honestly replacing linear search by letting sticky aim handle the search
-            using (Benchmark("LinearSearch")) 
+            foreach (var p in KDPredictions)
             {
-                foreach (var p in KDPredictions)
-                {
-                    var dx = p.CenterXTranslated * IMAGE_SIZE - center;
-                    var dy = p.CenterYTranslated * IMAGE_SIZE - center;
-                    double d2 = dx * dx + dy * dy; // dx^2 + dy^2
-
-                    if (d2 < bestDistSq) { bestDistSq = d2; bestCandidate = p; }
-                }
+                p.Rectangle = new RectangleF(
+                    p.Rectangle.X + detectionBox.Left,
+                    p.Rectangle.Y + detectionBox.Top,
+                    p.Rectangle.Width,
+                    p.Rectangle.Height);
             }
 
-            Prediction? finalTarget = HandleStickyAim(bestCandidate, KDPredictions);
-            if (finalTarget != null)
-            {
-                UpdateDetectionBox(finalTarget, detectionBox);
-                SaveFrame(frame, finalTarget);
-                return finalTarget;
-            }
-
-            frame.Dispose(); // Dispose the frame to free resources
-            return null;
+            SaveFrame(frame);
+            frame.Dispose();
+            return KDPredictions;
         }
 
-        // sticky aim needs to be refined
-        // this is a very basic implementation of sticky aim, it will be improved in the future.
-        /// TODO: REFINE linear search to find closest target based on mouse position / current target (?)
-        /// e.g whatever is closer to the current target
-        private Prediction? HandleStickyAim(Prediction? bestCandidate, List<Prediction> KDPredictions)
-        {
-            if (!Dictionary.toggleState["Sticky Aim"])
-            {
-                _currentTarget = bestCandidate; // update anyway
-                return bestCandidate;
-            }
-
-            float threshold = (float)Dictionary.sliderSettings["Sticky Aim Threshold"];
-            float thresholdSqr = threshold * threshold;
-
-            if (bestCandidate == null || KDPredictions == null || KDPredictions.Count == 0)
-            {
-                if (_currentTarget != null)
-                {
-                    if (++_consecutiveFramesWithoutTarget > MAX_FRAMES_WITHOUT_TARGET)
-                    {
-                        return null;
-                    }
-
-                    // keep previous target while within grace period
-                    return _currentTarget;
-                }
-                return null;
-            }
-            // reset consecutive frames since we have a target
-            _consecutiveFramesWithoutTarget = 0;
-
-            if (_currentTarget != null)
-            {
-                Prediction? matchedTarget = null;
-                float minSqrDistance = float.MaxValue;
-
-                foreach (var candidate in KDPredictions)
-                {
-                    float sqrDistance = Distance(_currentTarget, candidate);
-                    if (sqrDistance < minSqrDistance && sqrDistance < thresholdSqr)
-                    {
-                        minSqrDistance = sqrDistance;
-                        matchedTarget = candidate;
-                    }
-                }
-
-                if (matchedTarget != null)
-                {
-                    _consecutiveFramesWithoutTarget = 0;
-                    _currentTarget = matchedTarget;
-                    return matchedTarget;
-                }
-            }
-
-            // acquire a new target
-            _currentTarget = bestCandidate;
-            return bestCandidate;
-        }
-
-        private void UpdateDetectionBox(Prediction target, Rectangle detectionBox)
-        {
-            float translatedXMin = target.Rectangle.X + detectionBox.Left;
-            float translatedYMin = target.Rectangle.Y + detectionBox.Top;
-            LastDetectionBox = new(translatedXMin, translatedYMin,
-                target.Rectangle.Width, target.Rectangle.Height);
-
-            CenterXTranslated = target.CenterXTranslated;
-            CenterYTranslated = target.CenterYTranslated;
-        }
         // is it really kdtreedata though....
         private List<Prediction> PrepareKDTreeData(
             Tensor<float> outputTensor,

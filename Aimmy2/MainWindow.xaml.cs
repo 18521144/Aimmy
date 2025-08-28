@@ -612,14 +612,12 @@ namespace Aimmy2
                 ["Show Detected Player"] = () =>
                 {
                     ShowHideDPWindow();
-                    DPWindow.DetectedPlayerFocus.Visibility = GetToggleVisibility(title, true);
-                    // Force reposition when showing the window
                     if (Dictionary.toggleState[title])
                     {
                         DPWindow.ForceReposition();
                     }
                 },
-                ["Show AI Confidence"] = () => DPWindow.DetectedPlayerConfidence.Visibility = GetToggleVisibility(title, true),
+                ["Show AI Confidence"] = () => { },
                 ["Mouse Background Effect"] = () => { if (!Dictionary.toggleState[title]) RotaryGradient.Angle = 0; },
                 ["UI TopMost"] = () => Topmost = Dictionary.toggleState[title],
                 ["StreamGuard"] = () =>

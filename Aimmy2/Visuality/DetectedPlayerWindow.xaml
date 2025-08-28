@@ -15,33 +15,5 @@
         Closing="Window_Closing"
         ResizeMode="NoResize"
         IsTabStop="False">
-    <Grid>
-        <Label x:Name="DetectedPlayerConfidence"
-               HorizontalAlignment="Left"
-               VerticalAlignment="Top"
-               FontFamily="Consolas"
-               Content="Confidence = 20%"
-               Padding="0,0,0,0"
-               Opacity="0"
-               HorizontalContentAlignment="Center"
-               VerticalContentAlignment="Center"
-               Foreground="#DDFF0000"
-               FontSize="20" />
-        <Border x:Name="DetectedPlayerFocus"
-                Width="50"
-                Height="50"
-                BorderThickness="1"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Visibility="Visible"
-                Opacity="0" />
-        <Line x:Name="DetectedTracers"
-              X1="0"
-              Y1="0"
-              X2="10"
-              Y2="10"
-              Stroke="Red"
-              Opacity="0">
-        </Line>
-    </Grid>
+    <Canvas x:Name="DetectionCanvas" />
 </Window>
